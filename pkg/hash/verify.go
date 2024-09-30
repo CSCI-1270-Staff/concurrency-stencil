@@ -1,5 +1,8 @@
 package hash
 
+// NOTE: you can ignore this file
+
+// IsHash returns true if the index is a properly created hash index
 func IsHash(index *HashIndex) (bool, error) {
 	table := index.GetTable()
 	buckets := table.GetBuckets()

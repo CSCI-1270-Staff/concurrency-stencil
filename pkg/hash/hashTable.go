@@ -18,7 +18,7 @@ type HashTable struct {
 	pager       *pager.Pager // The pager associated with the Hash Table
 }
 
-// Returns a new HashTable.
+// NewHashTable creates a new, empty hash table with a depth of 2
 func NewHashTable(pager *pager.Pager) (*HashTable, error) {
 	depth := int64(2)
 	buckets := make([]int64, powInt(2, depth))
@@ -73,6 +73,7 @@ func (table *HashTable) Find(key int64) (entry.Entry, error) {
 // ExtendTable increases the global depth of the table by 1.
 func (table *HashTable) ExtendTable() {
 	table.globalDepth = table.globalDepth + 1
+	// Duplicate references to buckets in 2nd half of buckets slice
 	table.buckets = append(table.buckets, table.buckets...)
 }
 
