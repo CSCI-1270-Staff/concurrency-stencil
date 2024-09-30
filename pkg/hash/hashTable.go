@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"sync"
 
 	"dinodb/pkg/entry"
 	"dinodb/pkg/pager"
@@ -17,7 +16,6 @@ type HashTable struct {
 	globalDepth int64        // The **global** depth of the Hash Table
 	buckets     []int64      // Slice of bucket's page numbers. The indices (in binary) correspond to buckets' search keys in the HashTable
 	pager       *pager.Pager // The pager associated with the Hash Table
-	rwlock      sync.RWMutex // Lock on the Hash Table
 }
 
 // Returns a new HashTable.
@@ -108,7 +106,6 @@ func (table *HashTable) Update(key int64, value int64) error {
 // Delete the given key-value pair, does not coalesce.
 func (table *HashTable) Delete(key int64) error {
 	hash := Hasher(key, table.globalDepth)
-	// [CONCURRENCY]: Using GetAndLockBucket instead of GetBucket
 	bucket, err := table.GetBucket(hash)
 	if err != nil {
 		return err
