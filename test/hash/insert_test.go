@@ -175,7 +175,7 @@ func stageInsertRandom(testData InsertTestData) func(t *testing.T) {
 	return func(t *testing.T) {
 		index := setupHash(t)
 		// Generate and insert entries
-		entries, answerKey := utils.GenerateRandomKeyValuePairs(testData.numInserts)
+		entries, answerKey := utils.GenerateRandomKeyValuePairs(int(testData.numInserts))
 		for _, entry := range entries {
 			utils.InsertEntry(t, index, entry.Key, entry.Val)
 		}

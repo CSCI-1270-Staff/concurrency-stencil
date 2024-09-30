@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"dinodb/pkg/database"
+	"dinodb/pkg/entry"
 	"math/rand"
 	"os"
 	"testing"
