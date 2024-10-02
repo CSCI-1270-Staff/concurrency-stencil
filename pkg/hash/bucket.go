@@ -92,7 +92,7 @@ func (bucket *HashBucket) Delete(key int64) error {
 		return errors.New("key not found, delete aborted")
 	}
 	// Move all other keys left by one.
-	for i := index; i < bucket.numKeys; i++ {
+	for i := index; i < bucket.numKeys-1; i++ {
 		bucket.modifyEntry(i, bucket.getEntry(i+1))
 	}
 	bucket.updateNumKeys(bucket.numKeys - 1)
