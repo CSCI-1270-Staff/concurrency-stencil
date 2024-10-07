@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 
+	"dinodb/pkg/btree"
 	"dinodb/pkg/hash"
 )
 
@@ -71,11 +72,11 @@ func (db *Database) CreateTable(name string, indexType IndexType) (index Index, 
 	}
 	// Open the right type of index.
 	switch indexType {
-	// case BTreeIndexType:
-	// 	index, err = btree.OpenTable(path)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
+	case BTreeIndexType:
+		index, err = btree.OpenIndex(path)
+		if err != nil {
+			return nil, err
+		}
 	case HashIndexType:
 		index, err = hash.OpenTable(path)
 		if err != nil {
@@ -107,13 +108,12 @@ func (db *Database) GetTable(name string) (index Index, err error) {
 		if err != nil {
 			return nil, err
 		}
+	} else {
+		index, err = btree.OpenIndex(path)
+		if err != nil {
+			return nil, err
+		}
 	}
-	// else {
-	// 	index, err = btree.OpenTable(path)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// }
 	db.tables[name] = index
 	return index, nil
 }

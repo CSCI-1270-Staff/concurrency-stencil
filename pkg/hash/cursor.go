@@ -14,8 +14,8 @@ type HashCursor struct {
 	curBucket *HashBucket
 }
 
-// TableStart returns a cursor to the first entry in the hash table.
-func (table *HashIndex) TableStart() (cursor.Cursor, error) {
+// CursorAtStart returns a cursor to the first entry in the hash table.
+func (table *HashIndex) CursorAtStart() (cursor.Cursor, error) {
 	cursor := HashCursor{table: table, cellnum: 0}
 
 	curPage, err := table.pager.GetPage(ROOT_PN)
@@ -29,7 +29,7 @@ func (table *HashIndex) TableStart() (cursor.Cursor, error) {
 		noEntries := cursor.Next()
 		//if noEntries is true, then all our buckets are empty
 		if noEntries {
-			return nil, errors.New("TableStart error: all buckets are empty")
+			return nil, errors.New("all buckets are empty")
 		}
 	}
 
