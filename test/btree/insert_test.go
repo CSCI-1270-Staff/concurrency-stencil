@@ -80,8 +80,7 @@ type InsertTestData struct {
 func TestBTreeInsert(t *testing.T) {
 	t.Run("Ascending", testInsertAscending)
 	t.Run("Random", testInsertRandom)
-
-	t.Run("TestBTreeInsertDuplicates", testInsertDuplicateKeys)
+	t.Run("Duplicates", testInsertDuplicateKeys)
 }
 
 func stageInsertAscending(testData InsertTestData) func(t *testing.T) {

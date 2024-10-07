@@ -9,7 +9,7 @@ import (
 
 func TestBTreeSelect(t *testing.T) {
 	t.Run("Increasing", testSelectIncreasing)
-	t.Run("SelectWithEmptyNodes", testSelectWithEmptyNodes)
+	t.Run("WithEmptyNodes", testSelectWithEmptyNodes)
 }
 
 func TestBTreeSelectRange(t *testing.T) {
