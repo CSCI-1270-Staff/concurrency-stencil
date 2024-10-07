@@ -55,12 +55,12 @@ func HandleCreateTable(d *Database, payload string) (output string, err error) {
 	}
 	var tableType IndexType
 	switch fields[1] {
-	// case "btree":
-	// 	tableType = BTreeIndexType
+	case "btree":
+		tableType = BTreeIndexType
 	case "hash":
 		tableType = HashIndexType
 	default:
-		return "", errors.New("create error: invalid index type passed in")
+		return "", errors.New("create error: internal error")
 	}
 	tableName := fields[3]
 	_, err = d.CreateTable(tableName, tableType)

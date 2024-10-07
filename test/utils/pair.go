@@ -10,7 +10,7 @@ type KeyValuePair struct {
 
 // GenerateRandomKeyValuePairs generates n random key-value pairs with unique keys.
 // Returns the n pairs generated in a slice and a map that maps the generated keys to the generated values.
-func GenerateRandomKeyValuePairs(n int) ([]KeyValuePair, map[int64]int64) {
+func GenerateRandomKeyValuePairs(n int64) ([]KeyValuePair, map[int64]int64) {
 	entries := make([]KeyValuePair, n)
 	answerKey := make(map[int64]int64, n)
 	for i := range n {

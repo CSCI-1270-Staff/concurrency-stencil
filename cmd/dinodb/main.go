@@ -39,7 +39,7 @@ func setupCloseHandler(database *database.Database) {
 func main() {
 	// Set up flags.
 	var promptFlag = flag.Bool("c", true, "use prompt?")
-	var projectFlag = flag.String("project", "", "choose project: [go,pager,hash] (required)")
+	var projectFlag = flag.String("project", "", "choose project: [go,pager,hash,btree] (required)")
 
 	// [HASH/BTREE]
 	var dbFlag = flag.String("db", "data/", "DB folder")
@@ -80,12 +80,12 @@ func main() {
 		repls = append(repls, pRepl)
 
 	// [HASH/BTREE]
-	case "hash", "b+tree":
+	case "hash", "btree":
 		server = false
 		repls = append(repls, database.DatabaseRepl(db))
 
 	default:
-		fmt.Println("must specify -project [go,pager,hash]")
+		fmt.Println("must specify -project [go,pager,hash,btree]")
 		return
 	}
 

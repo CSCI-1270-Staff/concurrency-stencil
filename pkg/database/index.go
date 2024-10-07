@@ -27,5 +27,5 @@ type Index interface {
 	Select() ([]entry.Entry, error)
 	Print(io.Writer)
 	PrintPN(int, io.Writer)
-	TableStart() (cursor.Cursor, error)
+	CursorAtStart() (cursor.Cursor, error)
 }
