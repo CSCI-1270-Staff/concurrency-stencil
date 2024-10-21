@@ -8,6 +8,7 @@ import (
 	"syscall"
 
 	"dinodb/pkg/config"
+	"dinodb/pkg/join"
 	"dinodb/pkg/list"
 	"dinodb/pkg/pager"
 	"dinodb/pkg/repl"
@@ -39,7 +40,7 @@ func setupCloseHandler(database *database.Database) {
 func main() {
 	// Set up flags.
 	var promptFlag = flag.Bool("c", true, "use prompt?")
-	var projectFlag = flag.String("project", "", "choose project: [go,pager,hash,btree] (required)")
+	var projectFlag = flag.String("project", "", "choose project: [go,pager,hash,btree,join] (required)")
 
 	// [HASH/BTREE]
 	var dbFlag = flag.String("db", "data/", "DB folder")
@@ -84,8 +85,14 @@ func main() {
 		server = false
 		repls = append(repls, database.DatabaseRepl(db))
 
+	// [JOIN]
+	case "join":
+		server = false
+		repls = append(repls, database.DatabaseRepl(db))
+		repls = append(repls, join.JoinRepl(db))
+
 	default:
-		fmt.Println("must specify -project [go,pager,hash,btree]")
+		fmt.Println("must specify -project [go,pager,hash,btree,join]")
 		return
 	}
 
