@@ -17,6 +17,15 @@ type HashBucket struct {
 	page       *pager.Page // The page containing the bucket's data
 }
 
+// [CONCURRENCY] Enumerates 3 different locking operations: no lock, write lock, or read lock.
+type BucketLockType int
+
+const (
+	NO_LOCK    BucketLockType = 0
+	WRITE_LOCK BucketLockType = 1
+	READ_LOCK  BucketLockType = 2
+)
+
 // newHashBucket constructs a new, empty HashBucket with the specified local depth
 // using a new page from the specified pager.
 // The new page must be put by the caller of this method.
@@ -53,7 +62,12 @@ func (bucket *HashBucket) Find(key int64) (entry.Entry, bool) {
 // Inserts the given key-value pair, allowing duplicate keys.
 // Returns whether the bucket needs to split after this insertion.
 func (bucket *HashBucket) Insert(key int64, value int64) bool {
-	panic("Not yet implemented")
+	/* SOLUTION {{{ */
+	bucket.modifyEntry(bucket.numKeys, entry.New(key, value))
+	bucket.updateNumKeys(bucket.numKeys + 1)
+	// If we reach the max number of keys a Hash Bucket can store, we must split
+	return bucket.numKeys >= MAX_BUCKET_SIZE
+	/* SOLUTION }}} */
 }
 
 // Update modifies the value associated with a given key, or returns an error
@@ -116,6 +130,26 @@ func (bucket *HashBucket) Print(w io.Writer) {
 		bucket.getEntry(i).Print(w)
 	}
 	io.WriteString(w, "\n")
+}
+
+// [CONCURRENCY] Grab a write lock on the hash table index
+func (bucket *HashBucket) WLock() {
+	bucket.page.WLock()
+}
+
+// [CONCURRENCY] Release a write lock on the hash table index
+func (bucket *HashBucket) WUnlock() {
+	bucket.page.WUnlock()
+}
+
+// [CONCURRENCY] Grab a read lock on the hash table index
+func (bucket *HashBucket) RLock() {
+	bucket.page.RLock()
+}
+
+// [CONCURRENCY] Release a read lock on the hash table index
+func (bucket *HashBucket) RUnlock() {
+	bucket.page.RUnlock()
 }
 
 /////////////////////////////////////////////////////////////////////////////

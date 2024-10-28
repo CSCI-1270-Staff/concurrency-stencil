@@ -78,3 +78,9 @@ func (cursor *HashCursor) GetEntry() (entry.Entry, error) {
 	entry := cursor.curBucket.getEntry(cursor.cellnum)
 	return entry, nil
 }
+
+// Close is called when we no longer need to use the cursor anymore.
+func (cursor *HashCursor) Close() {
+	// Don't actually need to do anything for Hash because the locking
+	// is done on a course granularity
+}

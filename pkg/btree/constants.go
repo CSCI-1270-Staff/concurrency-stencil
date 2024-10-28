@@ -41,3 +41,6 @@ const (
 	KEYS_SIZE                 int64 = KEY_SIZE * (KEYS_PER_INTERNAL_NODE + 1)
 	PNS_OFFSET                int64 = KEYS_OFFSET + KEYS_SIZE
 )
+
+// [CONCURRENCY]
+var SUPER_NODE = &InternalNode{NodeHeader: NodeHeader{INTERNAL_NODE, 0, &pager.Page{}}}

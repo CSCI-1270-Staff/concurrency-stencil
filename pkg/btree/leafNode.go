@@ -4,6 +4,7 @@ import (
 	"dinodb/pkg/entry"
 	"dinodb/pkg/pager"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -15,6 +16,7 @@ import (
 type LeafNode struct {
 	NodeHeader           // Embeds all NodeHeader fields.
 	rightSiblingPN int64 // The page number of the right sibling node.
+	parent         Node  // A pointer to the parent node (only used in CONCURRENCY for unlocking).
 }
 
 // insert finds the appropriate place in the leaf node to insert a new key-value pair.
@@ -23,17 +25,77 @@ type LeafNode struct {
 //
 // If the update flag is true, then insert will update the value of an existing key instead,
 // returning an error if an existing entry to overwrite is not found.
+// CONCURRENCY:
+// - Unlock parents if it is impossible to split
+// - The insert should fully complete at the leaf node, so make sure to unlock accordingly
 func (node *LeafNode) insert(key int64, value int64, update bool) (Split, error) {
-	panic("Not implemented yet")
+	/* SOLUTION {{{ */
+	// Get insert position.
+	insertPos := node.search(key)
+	// Check if this is a duplicate entry.
+	if insertPos < node.numKeys && node.getKeyAt(insertPos) == key {
+		if update {
+			node.updateValueAt(insertPos, value)
+			return Split{}, nil
+		} else {
+			return Split{}, errors.New("cannot insert duplicate key")
+		}
+	}
+	// Return an error if we're updating a non-existent entry.
+	if update {
+		return Split{}, errors.New("cannot update non-existent entry")
+	}
+	// Shift entries to the right if needed.
+	for i := node.numKeys - 1; i >= insertPos; i-- {
+		node.updateKeyAt(i+1, node.getKeyAt(i))
+		node.updateValueAt(i+1, node.getValueAt(i))
+	}
+	node.updateNumKeys(node.numKeys + 1)
+	// Modify the Entry at this position.
+	node.modifyEntry(insertPos, entry.New(key, value))
+	// Check if we need to split the node.
+	if node.numKeys >= ENTRIES_PER_LEAF_NODE {
+		return node.split()
+	}
+	return Split{}, nil
+	/* SOLUTION }}} */
 }
 
 // split is a helper function to split a leaf node, then propagate the split upwards.
 func (node *LeafNode) split() (Split, error) {
-	panic("Not implemented yet")
+	/* SOLUTION {{{ */
+	// Create a new leaf node to split our keys.
+	pager := node.page.GetPager()
+	newNode, err := createLeafNode(pager)
+	if err != nil {
+		return Split{}, err
+	}
+	defer pager.PutPage(newNode.getPage())
+	// Set the right sibling for our two nodes.
+	prevSiblingPN := node.setRightSibling(newNode.page.GetPageNum())
+	newNode.setRightSibling(prevSiblingPN)
+	// Transfer entries to the new node (plus the new entry) accordingly.
+	midpoint := node.numKeys / 2
+	for i := midpoint; i < node.numKeys; i++ {
+		newNode.updateKeyAt(newNode.numKeys, node.getKeyAt(i))
+		newNode.updateValueAt(newNode.numKeys, node.getValueAt(i))
+		newNode.updateNumKeys(newNode.numKeys + 1)
+	}
+	node.updateNumKeys(midpoint)
+	return Split{
+		isSplit: true,
+		key:     newNode.getKeyAt(0), // Get the right node's first key (median before split)
+		leftPN:  node.page.GetPageNum(),
+		rightPN: newNode.page.GetPageNum(),
+	}, nil
+	/* SOLUTION }}} */
 }
 
 // delete removes a given key-value pair from the leaf node, if the given key exists.
 func (node *LeafNode) delete(key int64) {
+	// [CONCURRENCY] Unlock parents, eventually unlock this node
+	node.unlockParents()
+	defer node.unlock()
 	// Find index of the specified key
 	deletePos := node.search(key)
 	if deletePos >= node.numKeys || node.getKeyAt(deletePos) != key {
@@ -51,6 +113,9 @@ func (node *LeafNode) delete(key int64) {
 // get returns a boolean indicating whether the specified key was found,
 // and if it was found, also returns the key's associated value.
 func (node *LeafNode) get(key int64) (value int64, found bool) {
+	// [CONCURRENCY] Unlock parents and eventually unlock this node
+	node.unlockParents()
+	defer node.unlock()
 	// Find index of key
 	index := node.search(key)
 	if index >= node.numKeys || node.getKeyAt(index) != key {
@@ -76,12 +141,6 @@ func (node *LeafNode) search(key int64) int64 {
 		},
 	)
 	return int64(minIndex)
-}
-
-// keyToNodeEntry is a helper function used to create cursors that point to the entry
-// with the given key. Returns the node and index within that node where the entry is found.
-func (node *LeafNode) keyToNodeEntry(key int64) (*LeafNode, int64, error) {
-	return node, node.search(key), nil
 }
 
 // printNode pretty prints our leaf node.
@@ -111,6 +170,7 @@ func (node *LeafNode) printNode(w io.Writer, firstPrefix string, prefix string) 
 }
 
 // pageToLeafNode returns the leaf node that is stored in the specified page.
+// Concurrency note: the given page must at least be read-locked before calling.
 func pageToLeafNode(page *pager.Page) *LeafNode {
 	nodeHeader := pageToNodeHeader(page)
 	rightSiblingPN, _ := binary.Varint(
@@ -119,6 +179,7 @@ func pageToLeafNode(page *pager.Page) *LeafNode {
 	return &LeafNode{
 		nodeHeader,
 		rightSiblingPN,
+		nil,
 	}
 }
 
@@ -129,6 +190,7 @@ func createLeafNode(pager *pager.Pager) (*LeafNode, error) {
 	if err != nil {
 		return &LeafNode{}, err
 	}
+	// Don't need to lock newPage here since we are the only one who can have a reference to it
 	initPage(newPage, LEAF_NODE)
 	return pageToLeafNode(newPage), nil
 }
@@ -144,8 +206,9 @@ func (node *LeafNode) getNodeType() NodeType {
 }
 
 // copy copies the metadata and data of the passed in LeafNode to this LeafNode.
+// Concurrency note: the toCopy node's page must at least be read-locked before calling.
 func (node *LeafNode) copy(toCopy *LeafNode) {
-	copy(node.page.GetData(), toCopy.page.GetData())
+	node.page.Update(toCopy.page.GetData(), 0, pager.Pagesize)
 	node.updateNumKeys(toCopy.numKeys)
 	node.setRightSibling(toCopy.rightSiblingPN)
 }
@@ -185,6 +248,7 @@ func (node *LeafNode) modifyEntry(index int64, entry entry.Entry) {
 }
 
 // getEntry returns the entry stored in the entry at the given index.
+// Concurrency note: this LeafNode must at least be read-locked before calling.
 func (node *LeafNode) getEntry(index int64) entry.Entry {
 	startPos := node.entryPos(index)
 	// Deserialize the entry.
@@ -193,6 +257,7 @@ func (node *LeafNode) getEntry(index int64) entry.Entry {
 }
 
 // getKeyAt returns the key stored at the given index of the leaf node.
+// Concurrency note: this LeafNode must at least be read-locked before calling.
 func (node *LeafNode) getKeyAt(index int64) int64 {
 	return node.getEntry(index).Key
 }
@@ -204,6 +269,7 @@ func (node *LeafNode) updateKeyAt(index int64, newKey int64) {
 }
 
 // getValueAt returns the value stored at the given index of the leaf node.
+// Concurrency note: this LeafNode must at least be read-locked before calling.
 func (node *LeafNode) getValueAt(index int64) int64 {
 	return node.getEntry(index).Value
 }
@@ -221,4 +287,37 @@ func (node *LeafNode) updateNumKeys(newNumKeys int64) {
 	nKeysData := make([]byte, NUM_KEYS_SIZE)
 	binary.PutVarint(nKeysData, newNumKeys)
 	node.page.Update(nKeysData, NUM_KEYS_OFFSET, NUM_KEYS_SIZE)
+}
+
+/////////////////////////////////////////////////////////////////////////////
+////////////////////////// Lock  Helper Functions ///////////////////////////
+/////////////////////////////////////////////////////////////////////////////
+
+// canSplit returns whether this node has the capability to split in the next insert operation.
+func (node *LeafNode) canSplit() bool {
+	return node.numKeys == ENTRIES_PER_LEAF_NODE-1
+}
+
+// unlockParents unlocks all of this node's locked parents.
+func (node *LeafNode) unlockParents() {
+	// Remove this node's parent pointer
+	parent := node.parent
+	node.parent = nil
+	// Parent pointers are only set if the node's parent is locked -
+	// take advantage of this to iteratively unlock all locked parents
+	for parent != nil {
+		switch castedParent := parent.(type) {
+		case *InternalNode:
+			parent = castedParent.parent
+			castedParent.unlock()
+		case *LeafNode:
+			panic("Should never have a leaf as a parent")
+		}
+	}
+}
+
+// unlock unlocks this leaf node.
+func (node *LeafNode) unlock() {
+	node.parent = nil
+	node.page.WUnlock()
 }

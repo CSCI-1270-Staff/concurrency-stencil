@@ -10,13 +10,12 @@ const NoPage = -1
 
 // Page caches a page from disk and stores additional metadata.
 type Page struct {
-	pager      *Pager       // Pointer to the pager that this page belongs to
-	pagenum    int64        // Unique identifier for the page also denoting it's position stored in the pager's file
-	pinCount   atomic.Int64 // The number of active references to this page
-	dirty      bool         // Flag on whether the page's data has changed and needs to be written to disk
-	rwlock     sync.RWMutex // Reader-writer lock on the page struct itself
-	data       []byte       // Serialized data (the actual 4096 bytes of the page)
-	updateLock sync.Mutex   // Mutex for updating the page's data
+	pager    *Pager       // Pointer to the pager that this page belongs to
+	pagenum  int64        // Unique identifier for the page also denoting it's position stored in the pager's file
+	pinCount atomic.Int64 // The number of active references to this page
+	dirty    bool         // Flag on whether the page's data has changed and needs to be written to disk
+	rwlock   sync.RWMutex // Reader-writer lock on the page struct itself
+	data     []byte       // Serialized data (the actual 4096 bytes of the page)
 }
 
 // GetPager returns the pager this page belongs to.
@@ -56,8 +55,26 @@ func (page *Page) Put() int64 {
 
 // Update updates this page with `size` bytes of the the given data slice at the specified offset.
 func (page *Page) Update(data []byte, offset int64, size int64) {
-	page.updateLock.Lock()
-	defer page.updateLock.Unlock()
 	page.dirty = true
 	copy(page.data[offset:offset+size], data)
+}
+
+// [CONCURRENCY] Grab a writers lock on the page.
+func (page *Page) WLock() {
+	page.rwlock.Lock()
+}
+
+// [CONCURRENCY] Release a writers lock.
+func (page *Page) WUnlock() {
+	page.rwlock.Unlock()
+}
+
+// [CONCURRENCY] Grab a readers lock on the page.
+func (page *Page) RLock() {
+	page.rwlock.RLock()
+}
+
+// [CONCURRENCY] Release a readers lock.
+func (page *Page) RUnlock() {
+	page.rwlock.RUnlock()
 }

@@ -139,6 +139,7 @@ Writes the welcome string and then runs the REPL loop.
   - ex: If the REPL line is 'dinodb>          ', 'dinodb>' would be the prompt
 
 - Note that input and output default to Stdin and Stdout if not specified
+- Check out the cleanInput() function to clean user input.
 - Explore the documentation for bufio.Scanner, io.WriteString(), strings.Fields()
 - You should pass the entire payload string to the first parameter in action when a command is run. Don’t remove 
 the equivalent of argv[0] - pass the whole string! 

@@ -16,6 +16,7 @@ type BTreeCursor struct {
 }
 
 // CursorAtStart returns a cursor pointing to the first entry of the B+Tree.
+// Cursor's node should be locked upon leaving, and the page should not have been put
 func (index *BTreeIndex) CursorAtStart() (cursor.Cursor, error) {
 	// Get the root page.
 	curPage, err := index.pager.GetPage(index.rootPN)
@@ -57,21 +58,41 @@ func (index *BTreeIndex) CursorAtStart() (cursor.Cursor, error) {
 // after the position of where key would be.
 //
 // Hint: use keyToNodeEntry
+// Cursor's node should leave locked, and its page should not have been put
 func (index *BTreeIndex) CursorAt(key int64) (cursor.Cursor, error) {
 	// Get the root page.
 	rootPage, err := index.pager.GetPage(index.rootPN)
 	if err != nil {
 		return nil, err
 	}
-	defer index.pager.PutPage(rootPage)
+	// [CONCURRENCY]
+	rootPage.RLock()
 	rootNode := pageToNode(rootPage)
-	// Find the leaf node and i that this key belongs to.
-	leaf, i, err := rootNode.keyToNodeEntry(key)
-	if err != nil {
-		return nil, err
+	// Traverse down the B+Tree to find where the entry with the given key is found
+	curNode := rootNode
+	for {
+		iNode, ok := curNode.(*InternalNode)
+		if !ok {
+			// curNode must be a leaf node so we have reached the bottom of the tree
+			break
+		}
+		i := iNode.search(key)
+		child, err := iNode.getChildAt(i)
+		if err != nil {
+			return nil, err
+		}
+
+		// [CONCURRENCY] lock-crabbing: get child lock, then release parent lock and put its page
+		child.getPage().RLock()
+		curPage := curNode.getPage()
+		index.pager.PutPage(curPage)
+		curPage.RUnlock()
+
+		curNode = child
 	}
+
 	// Initialize cursor
-	cursor := &BTreeCursor{index: index, curIndex: i, curNode: leaf}
+	cursor := &BTreeCursor{index: index, curIndex: curNode.search(key), curNode: curNode.(*LeafNode)}
 	// If the cursor is not pointing at an entry, call Next()
 	// This can happen if the entry associated 'key' was previously deleted
 	// we can do this because CursorAt() is used only for SelectRange()
@@ -82,6 +103,8 @@ func (index *BTreeIndex) CursorAt(key int64) (cursor.Cursor, error) {
 }
 
 // Next() moves the cursor ahead by one entry. Returns true at the end of the BTree.
+// Cursor's node should enter and leave locked.
+// The node the cursor is in upon return's page should not have been put
 func (cursor *BTreeCursor) Next() (atEnd bool) {
 	// If the cursor is at the end of the node, go to the next node.
 	if cursor.curIndex+1 >= cursor.curNode.numKeys {
@@ -123,4 +146,13 @@ func (cursor *BTreeCursor) GetEntry() (entry.Entry, error) {
 	}
 	entry := cursor.curNode.getEntry(cursor.curIndex)
 	return entry, nil
+}
+
+// Close is called to unlock the page of the node the Cursor is in
+// once the Cursor is no longer being used.
+func (cursor *BTreeCursor) Close() {
+	// Unlock the Cursor's node node once we are done with the cursor
+	// and put the page of the node the cursor was in
+	cursor.index.pager.PutPage(cursor.curNode.page)
+	cursor.curNode.page.RUnlock()
 }

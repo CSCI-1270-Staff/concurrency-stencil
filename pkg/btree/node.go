@@ -2,6 +2,7 @@ package btree
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 
 	"dinodb/pkg/pager"
@@ -43,9 +44,6 @@ type Node interface {
 
 	// Helper methods added for convenience
 	search(searchKey int64) int64
-	// keyToNodeEntry is a helper function used to create cursors that point to the entry
-	// with the given key. Returns the node and index within that node where the entry is found.
-	keyToNodeEntry(key int64) (node *LeafNode, index int64, err error)
 	// printNode writes a string representation of the node to the specified
 	printNode(io.Writer, string, string)
 	// getPage returns the node's underlying page where it's data is stored.
@@ -74,14 +72,16 @@ type NodeHeader struct {
 
 // initPage resets the page's data then sets the nodeType bit.
 func initPage(page *pager.Page, nodeType NodeType) {
-	page.SetDirty(true)
-	copy(page.GetData(), make([]byte, pager.Pagesize))
+	newData := make([]byte, pager.Pagesize)
+	// Set the nodeType bit for leaf nodes (don't need to set InternalNode bit since it is 0)
 	if nodeType == LEAF_NODE {
-		(page.GetData())[NODETYPE_OFFSET] = 1 // Set the nodeType bit
+		newData[NODETYPE_OFFSET] = 1
 	}
+	page.Update(newData, 0, pager.Pagesize)
 }
 
 // pageToNode returns the node corresponding to the given page.
+// Concurrency note: the given page must at least be read-locked before calling.
 func pageToNode(page *pager.Page) Node {
 	nodeHeader := pageToNodeHeader(page)
 	if nodeHeader.nodeType == LEAF_NODE {
@@ -91,6 +91,7 @@ func pageToNode(page *pager.Page) Node {
 }
 
 // pageToNodeHeader returns node header data from the given page.
+// Concurrency note: the given page must at least be read-locked before calling.
 func pageToNodeHeader(page *pager.Page) NodeHeader {
 	var nodeType NodeType
 	if page.GetData()[NODETYPE_OFFSET] == 0 {
@@ -105,5 +106,48 @@ func pageToNodeHeader(page *pager.Page) NodeHeader {
 		nodeType: nodeType,
 		numKeys:  numKeys,
 		page:     page,
+	}
+}
+
+// [CONCURRENCY] Sets the root node's parent pointer to the SUPER_NODE.
+func initRootNode(root Node) {
+	switch castedRootNode := root.(type) {
+	case *InternalNode:
+		castedRootNode.parent = SUPER_NODE
+	case *LeafNode:
+		castedRootNode.parent = SUPER_NODE
+	}
+}
+
+// [CONCURRENCY]
+// lockRoot locks the super node and the specified root node's page.
+func lockRoot(rootPage *pager.Page) {
+	SUPER_NODE.page.WLock()
+	rootPage.WLock()
+}
+
+// [CONCURRENCY]
+// Force unlocks the super node and the root node.
+// Is backup function that should only be called
+// if the student has not finished concurrency yet.
+func unsafeUnlockRoot(root Node) {
+	// Lock the root node.
+	switch castedRootNode := root.(type) {
+	case *InternalNode:
+		if castedRootNode.parent != nil {
+			// Emit a warning to disable this function call.
+			fmt.Println("WARNING: unsafeUnlockRoot was called. This function will only be called if theroot node is not being unlocked properly.")
+			castedRootNode.parent = nil
+			castedRootNode.page.WUnlock()
+			SUPER_NODE.page.WUnlock()
+		}
+	case *LeafNode:
+		if castedRootNode.parent != nil {
+			// Emit a warning to disable this function call.
+			fmt.Println("WARNING: unsafeUnlockRoot was called. This function will only be called if the root node is not being unlocked properly.")
+			castedRootNode.parent = nil
+			castedRootNode.page.WUnlock()
+			SUPER_NODE.page.WUnlock()
+		}
 	}
 }

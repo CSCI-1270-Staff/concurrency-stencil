@@ -3,17 +3,21 @@ package main
 import (
 	"flag"
 	"fmt"
+
+	"log"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
 	"dinodb/pkg/config"
-	"dinodb/pkg/join"
 	"dinodb/pkg/list"
 	"dinodb/pkg/pager"
 	"dinodb/pkg/repl"
 
+	"dinodb/pkg/concurrency"
 	"dinodb/pkg/database"
+	"dinodb/pkg/join"
 
 	"github.com/google/uuid"
 )
@@ -36,14 +40,48 @@ func setupCloseHandler(database *database.Database) {
 	}()
 }
 
+// [CONCURRENCY]
+// // Start listening for connections at port `port`.
+func startServer(repl *repl.REPL, tm *concurrency.TransactionManager, prompt string, port int) {
+	// Handle a connection by running the repl on it.
+	handleConn := func(c net.Conn) {
+		clientId := uuid.New()
+		defer c.Close()
+		if tm != nil {
+			defer tm.Commit(clientId)
+		}
+		repl.Run(clientId, prompt, c, c)
+	}
+	// Start listening for new connections.
+	listener, err := net.Listen("tcp", fmt.Sprintf(":%v", port))
+	if err != nil {
+		log.Fatal(err)
+	}
+	dbName := config.DBName
+	fmt.Printf("%v server started listening on localhost:%v\n", dbName,
+		listener.Addr().(*net.TCPAddr).Port)
+	// Handle each connection.
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Print(err)
+			continue
+		}
+		go handleConn(conn)
+	}
+}
+
 // Start the database.
 func main() {
 	// Set up flags.
 	var promptFlag = flag.Bool("c", true, "use prompt?")
-	var projectFlag = flag.String("project", "", "choose project: [go,pager,hash,btree,join] (required)")
+	var projectFlag = flag.String("project", "", "choose project: [go,pager,hash,b+tree,join,concurrency] (required)")
 
 	// [HASH/BTREE]
 	var dbFlag = flag.String("db", "data/", "DB folder")
+
+	// [CONCURRENCY]
+	var portFlag = flag.Int("p", DEFAULT_PORT, "port number")
 
 	flag.Parse()
 
@@ -63,6 +101,8 @@ func main() {
 	prompt := config.GetPrompt(*promptFlag)
 	repls := make([]*repl.REPL, 0)
 
+	// [CONCURRENCY]
+	var tm *concurrency.TransactionManager
 	server := false
 
 	// Get the right REPLs.
@@ -81,7 +121,7 @@ func main() {
 		repls = append(repls, pRepl)
 
 	// [HASH/BTREE]
-	case "hash", "btree":
+	case "hash", "b+tree":
 		server = false
 		repls = append(repls, database.DatabaseRepl(db))
 
@@ -91,8 +131,15 @@ func main() {
 		repls = append(repls, database.DatabaseRepl(db))
 		repls = append(repls, join.JoinRepl(db))
 
+	// [CONCURRENCY]
+	case "concurrency":
+		server = true
+		lm := concurrency.NewResourceLockManager()
+		tm = concurrency.NewTransactionManager(lm)
+		repls = append(repls, concurrency.TransactionREPL(db, tm))
+
 	default:
-		fmt.Println("must specify -project [go,pager,hash,btree,join]")
+		fmt.Println("must specify -project [go,pager,hash,b+tree,join,concurrency]")
 		return
 	}
 
@@ -103,11 +150,10 @@ func main() {
 		return
 	}
 
-	// Start server if server (concurrency or recovery), else run REPL here.
+	// Start server if server (concurrency), else run REPL here.
 	if server {
 		// 	[CONCURRENCY]
-		//ignore for now
-		r.Run(uuid.New(), prompt, nil, nil)
+		startServer(r, tm, prompt, *portFlag)
 	} else {
 		r.Run(uuid.New(), prompt, nil, nil)
 	}

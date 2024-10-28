@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"sync"
 
 	"dinodb/pkg/entry"
 	"dinodb/pkg/pager"
@@ -16,9 +17,10 @@ type HashTable struct {
 	globalDepth int64        // The **global** depth of the Hash Table
 	buckets     []int64      // Slice of bucket's page numbers. The indices (in binary) correspond to buckets' search keys in the HashTable
 	pager       *pager.Pager // The pager associated with the Hash Table
+	rwlock      sync.RWMutex // Lock on the Hash Table
 }
 
-// NewHashTable creates a new, empty hash table with a depth of 2
+// Returns a new HashTable.
 func NewHashTable(pager *pager.Pager) (*HashTable, error) {
 	depth := int64(2)
 	buckets := make([]int64, powInt(2, depth))
@@ -50,36 +52,56 @@ func (table *HashTable) GetPager() *pager.Pager {
 
 // Finds the entry with the given key.
 func (table *HashTable) Find(key int64) (entry.Entry, error) {
+	table.RLock()
 	// Hash the key.
 	hash := Hasher(key, table.globalDepth)
 	if hash < 0 || int(hash) >= len(table.buckets) {
+		table.RUnlock()
 		return entry.Entry{}, errors.New("not found")
 	}
 	// Get the corresponding bucket.
-	bucket, err := table.GetBucket(hash)
+	// [CONCURRENCY]: Using GetAndLockBucket instead of GetBucket
+	bucket, err := table.GetAndLockBucket(hash, READ_LOCK)
 	if err != nil {
+		table.RUnlock()
 		return entry.Entry{}, err
 	}
+	// bucket.RLock()
+	table.RUnlock()
 	defer table.pager.PutPage(bucket.page)
 
 	// Find the entry.
 	foundEntry, found := bucket.Find(key)
 	if !found {
+		bucket.RUnlock()
 		return entry.Entry{}, errors.New("not found")
 	}
+	bucket.RUnlock()
 	return foundEntry, nil
 }
 
 // ExtendTable increases the global depth of the table by 1.
 func (table *HashTable) ExtendTable() {
 	table.globalDepth = table.globalDepth + 1
-	// Duplicate references to buckets in 2nd half of buckets slice
 	table.buckets = append(table.buckets, table.buckets...)
 }
 
 // Insert a key / value pair into the Hash Table.
+// Make sure to lock both table and buckets
 func (table *HashTable) Insert(key int64, value int64) error {
-	panic("Not yet implemented")
+	/* SOLUTION {{{ */
+	hash := Hasher(key, table.globalDepth)
+	bucket, err := table.GetBucket(hash)
+	if err != nil {
+		return err
+	}
+	defer table.pager.PutPage(bucket.page)
+	split := bucket.Insert(key, value)
+	if !split {
+		return nil
+	}
+	return table.split(bucket, hash)
+	/* SOLUTION }}} */
 }
 
 // Split the given bucket into two, extending the table if necessary.
@@ -89,49 +111,126 @@ func (table *HashTable) Insert(key int64, value int64) error {
 // This may be a consequence of a bad hash function, but is a possible scenario
 // that we should handle.
 func (table *HashTable) split(bucket *HashBucket, hash int64) error {
-	panic("Not yet implemented")
+	/* SOLUTION {{{ */
+	// Figure out where the new pointer should live.
+	oldHash := (hash % powInt(2, bucket.localDepth))
+	newHash := oldHash + powInt(2, bucket.localDepth)
+	// If we are splitting, check if we need to double the table first.
+	if bucket.localDepth == table.globalDepth {
+		table.ExtendTable()
+	}
+	// Next, make a new bucket
+	bucket.updateLocalDepth(bucket.localDepth + 1)
+	newBucket, err := newHashBucket(table.pager, bucket.localDepth)
+	if err != nil {
+		return err
+	}
+	defer table.pager.PutPage(newBucket.page)
+
+	// Move entries over to it.
+	tmpEntries := make([]entry.Entry, bucket.numKeys)
+	for i := int64(0); i < bucket.numKeys; i++ {
+		tmpEntries[i] = bucket.getEntry(i)
+	}
+	oldNKeys := int64(0)
+	newNKeys := int64(0)
+	for _, entry := range tmpEntries {
+		if Hasher(entry.Key, bucket.localDepth) == newHash {
+			newBucket.modifyEntry(newNKeys, entry)
+			newNKeys++
+		} else {
+			bucket.modifyEntry(oldNKeys, entry)
+			oldNKeys++
+		}
+	}
+	// Initialize bucket attributes.
+	bucket.updateNumKeys(oldNKeys)
+	newBucket.updateNumKeys(newNKeys)
+	power := bucket.localDepth
+	// Point the rest of the buckets to the new page.
+	for i := newHash; i < powInt(2, table.globalDepth); i += powInt(2, power) {
+		table.buckets[i] = newBucket.page.GetPageNum()
+	}
+	// Check if recursive splitting is required
+	if oldNKeys >= MAX_BUCKET_SIZE {
+		return table.split(bucket, oldHash)
+	}
+	if newNKeys >= MAX_BUCKET_SIZE {
+		return table.split(newBucket, newHash)
+	}
+	return nil
+	/* SOLUTION }}} */
 }
 
 // Update the given key-value pair.
 func (table *HashTable) Update(key int64, value int64) error {
+	table.RLock()
 	hash := Hasher(key, table.globalDepth)
-	bucket, err := table.GetBucket(hash)
+	// [CONCURRENCY]: Using GetAndLockBucket instead of GetBucket
+	bucket, err := table.GetAndLockBucket(hash, WRITE_LOCK)
 	if err != nil {
+		table.RUnlock()
 		return err
 	}
 	defer table.pager.PutPage(bucket.page)
+	table.RUnlock()
+	defer bucket.WUnlock()
 	err2 := bucket.Update(key, value)
 	return err2
 }
 
 // Delete the given key-value pair, does not coalesce.
 func (table *HashTable) Delete(key int64) error {
+	table.RLock()
 	hash := Hasher(key, table.globalDepth)
-	bucket, err := table.GetBucket(hash)
+	// [CONCURRENCY]: Using GetAndLockBucket instead of GetBucket
+	bucket, err := table.GetAndLockBucket(hash, WRITE_LOCK)
 	if err != nil {
+		table.RUnlock()
 		return err
 	}
 	defer table.pager.PutPage(bucket.page)
+	table.RUnlock()
+	defer bucket.WUnlock()
 	err2 := bucket.Delete(key)
 	return err2
 }
 
 // Select all entries in this table.
 func (table *HashTable) Select() ([]entry.Entry, error) {
-	panic("Not yet implemented")
+	/* SOLUTION {{{ */
+	ret := make([]entry.Entry, 0)
+	for i := int64(0); i < table.pager.GetNumPages(); i++ {
+		bucket, err := table.GetBucket(i)
+		if err != nil {
+			return nil, err
+		}
+		entries, err := bucket.Select()
+		table.pager.PutPage(bucket.GetPage())
+		if err != nil {
+			return nil, err
+		}
+		ret = append(ret, entries...)
+	}
+	return ret, nil
+	/* SOLUTION }}} */
 }
 
 // Print writes a string representation of this entire table (including it's buckets) to the specified writer.
 func (table *HashTable) Print(w io.Writer) {
+	table.RLock()
+	defer table.RUnlock()
 	io.WriteString(w, "====\n")
 	io.WriteString(w, fmt.Sprintf("global depth: %d\n", table.globalDepth))
 	for i := range table.buckets {
 		io.WriteString(w, fmt.Sprintf("====\nbucket %d\n", i))
-		bucket, err := table.GetBucket(int64(i))
+		// [CONCURRENCY]: Using GetAndLockBucket instead of GetBucket
+		bucket, err := table.GetAndLockBucket(int64(i), READ_LOCK)
 		if err != nil {
 			continue
 		}
 		bucket.Print(w)
+		bucket.RUnlock()
 		table.pager.PutPage(bucket.page)
 	}
 	io.WriteString(w, "====\n")
@@ -139,16 +238,39 @@ func (table *HashTable) Print(w io.Writer) {
 
 // Print out a specific bucket.
 func (table *HashTable) PrintPN(pn int, w io.Writer) {
+	table.RLock()
+	defer table.RUnlock()
 	if int64(pn) >= table.pager.GetNumPages() {
 		fmt.Println("out of bounds")
 		return
 	}
-	bucket, err := table.GetBucket(int64(pn))
+	bucket, err := table.GetAndLockBucketByPN(int64(pn), READ_LOCK)
 	if err != nil {
 		return
 	}
 	bucket.Print(w)
+	bucket.RUnlock()
 	table.pager.PutPage(bucket.page)
+}
+
+// [CONCURRENCY] Grab a write lock on the hash table index
+func (table *HashTable) WLock() {
+	table.rwlock.Lock()
+}
+
+// [CONCURRENCY] Release a write lock on the hash table index
+func (table *HashTable) WUnlock() {
+	table.rwlock.Unlock()
+}
+
+// [CONCURRENCY] Grab a read lock on the hash table index
+func (table *HashTable) RLock() {
+	table.rwlock.RLock()
+}
+
+// [CONCURRENCY] Release a read lock on the hash table index
+func (table *HashTable) RUnlock() {
+	table.rwlock.RUnlock()
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -164,10 +286,35 @@ func (table *HashTable) GetBucketByPN(pn int64) (*HashBucket, error) {
 	return pageToBucket(page), nil
 }
 
+// Returns the bucket in the hash table using its page number, and increments the bucket ref count.
+func (table *HashTable) GetAndLockBucketByPN(pn int64, lock BucketLockType) (*HashBucket, error) {
+	page, err := table.pager.GetPage(pn)
+	if err != nil {
+		return nil, err
+	}
+	if lock == READ_LOCK {
+		page.RLock()
+	}
+	if lock == WRITE_LOCK {
+		page.WLock()
+	}
+	return pageToBucket(page), nil
+}
+
 // Returns the bucket in the hash table, and increments the bucket ref count.
 func (table *HashTable) GetBucket(hash int64) (*HashBucket, error) {
 	pagenum := table.buckets[hash]
 	bucket, err := table.GetBucketByPN(pagenum)
+	if err != nil {
+		return nil, err
+	}
+	return bucket, nil
+}
+
+// Returns the bucket in the hash table, and increments the bucket ref count.
+func (table *HashTable) GetAndLockBucket(hash int64, lock BucketLockType) (*HashBucket, error) {
+	pagenum := table.buckets[hash]
+	bucket, err := table.GetAndLockBucketByPN(pagenum, lock)
 	if err != nil {
 		return nil, err
 	}
