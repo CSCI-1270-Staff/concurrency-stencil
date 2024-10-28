@@ -17,7 +17,6 @@ import (
 
 	"dinodb/pkg/concurrency"
 	"dinodb/pkg/database"
-	"dinodb/pkg/join"
 
 	"github.com/google/uuid"
 )
@@ -75,7 +74,7 @@ func startServer(repl *repl.REPL, tm *concurrency.TransactionManager, prompt str
 func main() {
 	// Set up flags.
 	var promptFlag = flag.Bool("c", true, "use prompt?")
-	var projectFlag = flag.String("project", "", "choose project: [go,pager,hash,b+tree,join,concurrency] (required)")
+	var projectFlag = flag.String("project", "", "choose project: [go,pager,hash,b+tree,concurrency] (required)")
 
 	// [HASH/BTREE]
 	var dbFlag = flag.String("db", "data/", "DB folder")
@@ -125,12 +124,6 @@ func main() {
 		server = false
 		repls = append(repls, database.DatabaseRepl(db))
 
-	// [JOIN]
-	case "join":
-		server = false
-		repls = append(repls, database.DatabaseRepl(db))
-		repls = append(repls, join.JoinRepl(db))
-
 	// [CONCURRENCY]
 	case "concurrency":
 		server = true
@@ -139,7 +132,7 @@ func main() {
 		repls = append(repls, concurrency.TransactionREPL(db, tm))
 
 	default:
-		fmt.Println("must specify -project [go,pager,hash,b+tree,join,concurrency]")
+		fmt.Println("must specify -project [go,pager,hash,b+tree,concurrency]")
 		return
 	}
 

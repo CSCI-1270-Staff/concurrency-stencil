@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"dinodb/pkg/database"
-	"dinodb/pkg/join"
 	"dinodb/pkg/repl"
 
 	"github.com/google/uuid"
@@ -39,10 +38,6 @@ func TransactionREPL(db *database.Database, tm *TransactionManager) *repl.REPL {
 	r.AddCommand("select", func(payload string, replConfig *repl.REPLConfig) (string, error) {
 		return HandleSelect(db, tm, payload, replConfig.GetAddr())
 	}, "Select elements from a table. usage: select from <table>")
-
-	r.AddCommand("join", func(payload string, replConfig *repl.REPLConfig) (string, error) {
-		return HandleJoin(db, tm, payload, replConfig.GetAddr())
-	}, "Joins two tables. usage: join <table1> <key/val for table1> on <table2> <key/val for table2>")
 
 	r.AddCommand("transaction", func(payload string, replConfig *repl.REPLConfig) (string, error) {
 		return "", HandleTransaction(db, tm, payload, replConfig.GetAddr())
@@ -199,19 +194,6 @@ func HandleSelect(db *database.Database, tm *TransactionManager, payload string,
 	if output, err = database.HandleSelect(db, payload); err != nil {
 		return "", fmt.Errorf("select error: %v", err)
 	}
-	return
-}
-
-// Handle join.
-func HandleJoin(db *database.Database, tm *TransactionManager, payload string, clientId uuid.UUID) (output string, err error) {
-	fields := strings.Fields(payload)
-	numFields := len(fields)
-	// Usage: join <table1> <key/val for table1> on <table2> <key/val for table2>
-	if numFields != 6 || fields[3] != "on" || (fields[2] != "key" && fields[2] != "val") || (fields[5] != "key" && fields[5] != "val") {
-		return "", fmt.Errorf("usage: join <table1> <key/val for table1> on <table2> <key/val for table2>")
-	}
-	// NOTE: Join is unsafe; not locking anything. May provide an inconsistent view of the database.
-	output, err = join.HandleJoin(db, payload)
 	return
 }
 
